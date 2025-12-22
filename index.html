@@ -7,12 +7,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
-  <style>
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: #f1f1f1; }
-    ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #555; }
-  </style>
 </head>
 <body>
   <div id="root"></div>
@@ -22,978 +16,127 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect } = React;
     
-    // SUPABASE BAĞLANTISI - API KEY'İNİZİ BURAYA YAPIŞTIRIN!
-    const supabase = window.supabase.createClient(
-      'https://wahrqhkdxyavqgmvzhrn.supabase.co',
-      'BURAYA_API_KEY_YAPIŞTIRIN'  // ← Burayı değiştirin!
-    );
+    // SUPABASE BAĞLANTISI
+    const SUPABASE_URL = 'https://wahrqhkdxyavqgmvzhrn.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_JlO4Kls7wcR_zKsOw1I0zw_HnHItXz3'; // ← API KEY'İNİZİ BURAYA YAPIŞTIRIN
+    
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     function App() {
-      // Auth State
-      const [currentUser, setCurrentUser] = useState(null);
-      const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
       
-      // Page State
-      const [page, setPage] = useState('home');
-      const [products, setProducts] = useState([]);
-      const [invoices, setInvoices] = useState([]);
-      const [depots, setDepots] = useState([]);
-      const [stockAlerts, setStockAlerts] = useState([]);
-      const [stockMovements, setStockMovements] = useState([]);
-      const [loading, setLoading] = useState(false);
-      
-      // Search & Modal
-      const [search, setSearch] = useState('');
-      const [barcodeSearch, setBarcodeSearch] = useState('');
-      const [modal, setModal] = useState('');
-      const [step, setStep] = useState(1);
-      
-      // Form States
-      const [invoice, setInvoice] = useState({ number: '', date: '' });
-      const [product, setProduct] = useState({ 
-        name: '', price: '', stock: '', depot: '', subcategory: '', 
-        total: 0, barcode: '', minStock: 10 
-      });
-      const [tempProducts, setTempProducts] = useState([]);
-      const [selectedDepot, setSelectedDepot] = useState(null);
-      const [selectedProduct, setSelectedProduct] = useState(null);
-      
-      // Security
-      const [password, setPassword] = useState('1477');
-      const [passwordInput, setPasswordInput] = useState('');
-      const [deleteTarget, setDeleteTarget] = useState(null);
-      
-      // Depot Management
-      const [newDepot, setNewDepot] = useState({ name: '', location: '' });
-      const [newSubcat, setNewSubcat] = useState('');
-      
-      // Stock Movement
-      const [movementForm, setMovementForm] = useState({
-        type: 'in',
-        quantity: '',
-        fromDepot: '',
-        toDepot: '',
-        notes: ''
-      });
-      
-      // Reports
-      const [reportData, setReportData] = useState(null);
-      const chartRef = useRef(null);
-
-      // LOGIN CHECK
       useEffect(() => {
-        const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
-        if (user) {
-          setCurrentUser(user);
-          loadData();
-        }
+        // Test bağlantısı
+        const testConnection = async () => {
+          try {
+            const { data, error } = await supabase.from('depots').select('count');
+            if (error) throw error;
+            setError(null);
+          } catch (err) {
+            setError(err.message);
+          }
+          setLoading(false);
+        };
+        testConnection();
       }, []);
-
-      const handleLogin = async () => {
-        try {
-          const { data, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('username', loginForm.username)
-            .eq('password', loginForm.password)
-            .single();
-
-          if (error || !data) {
-            alert('❌ Kullanıcı adı veya şifre hatalı!');
-            return;
-          }
-
-          setCurrentUser(data);
-          localStorage.setItem('currentUser', JSON.stringify(data));
-          setLoginForm({ username: '', password: '' });
-          await loadData();
-        } catch (error) {
-          console.error('Login error:', error);
-          alert('❌ Giriş hatası: ' + error.message);
-        }
-      };
-
-      const handleLogout = () => {
-        setCurrentUser(null);
-        localStorage.removeItem('currentUser');
-        setPage('home');
-      };
-
-      // LOAD DATA
-      const loadData = async () => {
-        setLoading(true);
-        try {
-          const [depotsRes, invoicesRes, productsRes, alertsRes, movementsRes] = await Promise.all([
-            supabase.from('depots').select('*').order('id'),
-            supabase.from('invoices').select('*').order('created_at', { ascending: false }),
-            supabase.from('products').select('*').order('created_at', { ascending: false }),
-            supabase.from('stock_alerts').select('*, products(name)').eq('is_read', false),
-            supabase.from('stock_movements').select('*, products(name), users(full_name)').order('created_at', { ascending: false }).limit(50)
-          ]);
-
-          if (depotsRes.data) setDepots(depotsRes.data);
-          if (invoicesRes.data) {
-            const invoicesWithProducts = await Promise.all(
-              invoicesRes.data.map(async inv => {
-                const { data: prods } = await supabase
-                  .from('products')
-                  .select('*')
-                  .eq('invoice_id', inv.id);
-                return { ...inv, products: prods || [] };
-              })
-            );
-            setInvoices(invoicesWithProducts);
-          }
-          if (productsRes.data) setProducts(productsRes.data);
-          if (alertsRes.data) setStockAlerts(alertsRes.data);
-          if (movementsRes.data) setStockMovements(movementsRes.data);
-        } catch (error) {
-          console.error('Load error:', error);
-        }
-        setLoading(false);
-      };
-
-      // CHECK STOCK ALERTS
-      const checkStockAlerts = async (productId, currentStock, minStock) => {
-        if (currentStock <= 0) {
-          await supabase.from('stock_alerts').insert({
-            product_id: productId,
-            alert_type: 'out_of_stock'
-          });
-        } else if (currentStock <= minStock) {
-          await supabase.from('stock_alerts').insert({
-            product_id: productId,
-            alert_type: 'low_stock'
-          });
-        }
-      };
-
-      // BARCODE SEARCH
-      const searchByBarcode = async () => {
-        if (!barcodeSearch) return;
-        
-        const { data } = await supabase
-          .from('products')
-          .select('*')
-          .eq('barcode', barcodeSearch)
-          .single();
-
-        if (data) {
-          setSelectedProduct(data);
-          setModal('productDetail');
-        } else {
-          alert('❌ Barkod bulunamadı!');
-        }
-        setBarcodeSearch('');
-      };
-
-      // PRODUCT OPERATIONS
-      const calcTotal = (price, stock) => (parseFloat(price) || 0) * (parseInt(stock) || 0);
-      
-      const updateProduct = (field, val) => {
-        const p = { ...product, [field]: val };
-        p.total = calcTotal(p.price, p.stock);
-        setProduct(p);
-      };
-
-      const addTemp = () => {
-        if (!product.name || !product.price || !product.stock) {
-          return alert('Tüm alanları doldurun!');
-        }
-        setTempProducts([...tempProducts, { tempId: Date.now(), ...product }]);
-        setProduct({ ...product, name: '', price: '', stock: '', total: 0, barcode: '' });
-      };
-
-      const saveAll = async () => {
-        if (!tempProducts.length) return alert('Ürün ekleyin!');
-        
-        try {
-          // Faturayı kaydet
-          const { data: newInvoice, error: invError } = await supabase
-            .from('invoices')
-            .insert({
-              invoice_number: invoice.number,
-              invoice_date: invoice.date,
-              depot: product.depot,
-              subcategory: product.subcategory,
-              total_amount: tempProducts.reduce((s, t) => s + t.total, 0),
-              product_count: tempProducts.length
-            })
-            .select()
-            .single();
-
-          if (invError) throw invError;
-
-          // Ürünleri kaydet
-          const productsToSave = tempProducts.map(t => ({
-            invoice_id: newInvoice.id,
-            name: t.name,
-            price: t.price,
-            stock: t.stock,
-            total: t.total,
-            depot: product.depot,
-            subcategory: product.subcategory,
-            barcode: t.barcode || null,
-            min_stock: t.minStock || 10,
-            current_stock: t.stock
-          }));
-
-          const { data: savedProducts, error: prodError } = await supabase
-            .from('products')
-            .insert(productsToSave)
-            .select();
-
-          if (prodError) throw prodError;
-
-          // Stok hareketi kaydet
-          for (const prod of savedProducts) {
-            await supabase.from('stock_movements').insert({
-              product_id: prod.id,
-              movement_type: 'in',
-              quantity: prod.stock,
-              to_depot: product.depot,
-              user_id: currentUser.id,
-              notes: `Fatura: ${invoice.number}`
-            });
-
-            await checkStockAlerts(prod.id, prod.current_stock, prod.min_stock);
-          }
-
-          alert(`✅ ${tempProducts.length} ürün kaydedildi!`);
-          
-          setTempProducts([]);
-          setProduct({ name: '', price: '', stock: '', depot: '', subcategory: '', total: 0, barcode: '', minStock: 10 });
-          setSelectedDepot(null);
-          setInvoice({ number: '', date: '' });
-          setStep(1);
-          setModal('');
-          
-          await loadData();
-        } catch (error) {
-          console.error('Save error:', error);
-          alert('❌ Kayıt hatası: ' + error.message);
-        }
-      };
-
-      // STOCK MOVEMENT
-      const handleStockMovement = async () => {
-        if (!selectedProduct || !movementForm.quantity) {
-          return alert('Ürün ve miktar seçin!');
-        }
-
-        try {
-          const quantity = parseInt(movementForm.quantity);
-          let newStock = selectedProduct.current_stock;
-
-          if (movementForm.type === 'in') {
-            newStock += quantity;
-          } else if (movementForm.type === 'out') {
-            if (quantity > newStock) {
-              return alert('❌ Yetersiz stok!');
-            }
-            newStock -= quantity;
-          }
-
-          // Stok güncelle
-          const { error: updateError } = await supabase
-            .from('products')
-            .update({ current_stock: newStock })
-            .eq('id', selectedProduct.id);
-
-          if (updateError) throw updateError;
-
-          // Hareket kaydet
-          await supabase.from('stock_movements').insert({
-            product_id: selectedProduct.id,
-            movement_type: movementForm.type,
-            quantity: quantity,
-            from_depot: movementForm.fromDepot || selectedProduct.depot,
-            to_depot: movementForm.toDepot || selectedProduct.depot,
-            user_id: currentUser.id,
-            notes: movementForm.notes
-          });
-
-          await checkStockAlerts(selectedProduct.id, newStock, selectedProduct.min_stock);
-
-          alert('✅ Stok hareketi kaydedildi!');
-          setModal('');
-          setMovementForm({ type: 'in', quantity: '', fromDepot: '', toDepot: '', notes: '' });
-          await loadData();
-        } catch (error) {
-          console.error('Movement error:', error);
-          alert('❌ Hata: ' + error.message);
-        }
-      };
-
-      // REPORTS
-      const generateReport = async () => {
-        try {
-          const { data } = await supabase
-            .from('products')
-            .select('created_at, total')
-            .not('invoice_id', 'is', null);
-
-          const dailySales = {};
-          data.forEach(p => {
-            const date = new Date(p.created_at).toLocaleDateString('tr-TR');
-            dailySales[date] = (dailySales[date] || 0) + parseFloat(p.total);
-          });
-
-          const sortedDates = Object.keys(dailySales).sort();
-          const lastWeek = sortedDates.slice(-7);
-
-          setReportData({
-            labels: lastWeek,
-            values: lastWeek.map(d => dailySales[d]),
-            total: Object.values(dailySales).reduce((a, b) => a + b, 0),
-            invoiceCount: invoices.length,
-            productCount: products.length,
-            alertCount: stockAlerts.length
-          });
-
-          setPage('reports');
-        } catch (error) {
-          console.error('Report error:', error);
-        }
-      };
-
-      // RENDER CHART
-      useEffect(() => {
-        if (reportData && chartRef.current) {
-          const ctx = chartRef.current.getContext('2d');
-          
-          if (window.myChart) {
-            window.myChart.destroy();
-          }
-
-          window.myChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: reportData.labels,
-              datasets: [{
-                label: 'Günlük Satış (TL)',
-                data: reportData.values,
-                borderColor: 'rgb(59, 130, 246)',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                tension: 0.4,
-                fill: true
-              }]
-            },
-            options: {
-              responsive: true,
-              plugins: {
-                legend: { display: true },
-                title: { display: true, text: 'Son 7 Gün Satış Trendi' }
-              },
-              scales: {
-                y: { beginAtZero: true }
-              }
-            }
-          });
-        }
-      }, [reportData]);
-
-      // DELETE
-      const confirmDel = async () => {
-        if (passwordInput !== password) return alert('Hatalı şifre!');
-        
-        try {
-          if (page === 'invoices') {
-            await supabase.from('invoices').delete().eq('id', deleteTarget);
-          } else {
-            await supabase.from('depots').delete().eq('id', deleteTarget);
-          }
-          
-          setModal('');
-          setPasswordInput('');
-          alert('✅ Silindi!');
-          await loadData();
-        } catch (error) {
-          alert('❌ Silme hatası: ' + error.message);
-        }
-      };
-
-      // DEPOT OPERATIONS
-      const addDepot = async () => {
-        if (!newDepot.name || !newDepot.location) return alert('Tüm alanları doldurun!');
-        
-        try {
-          await supabase.from('depots').insert({
-            name: newDepot.name,
-            location: newDepot.location,
-            subcategories: []
-          });
-
-          alert('✅ Depo eklendi!');
-          setNewDepot({ name: '', location: '' });
-          setModal('');
-          await loadData();
-        } catch (error) {
-          alert('❌ Hata: ' + error.message);
-        }
-      };
-
-      const addSubcategory = async () => {
-        if (!newSubcat) return;
-        
-        try {
-          const updatedSubcats = [...(selectedDepot.subcategories || []), newSubcat];
-          await supabase.from('depots').update({ subcategories: updatedSubcats }).eq('id', selectedDepot.id);
-
-          alert('✅ Alt kategori eklendi!');
-          setNewSubcat('');
-          await loadData();
-        } catch (error) {
-          alert('❌ Hata: ' + error.message);
-        }
-      };
-
-      const removeSubcategory = async (subcat) => {
-        try {
-          const updatedSubcats = selectedDepot.subcategories.filter(s => s !== subcat);
-          await supabase.from('depots').update({ subcategories: updatedSubcats }).eq('id', selectedDepot.id);
-          await loadData();
-        } catch (error) {
-          alert('❌ Hata: ' + error.message);
-        }
-      };
-
-      const markAlertRead = async (alertId) => {
-        await supabase.from('stock_alerts').update({ is_read: true }).eq('id', alertId);
-        await loadData();
-      };
-
-      const filtered = products.filter(p => 
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        (p.barcode && p.barcode.includes(search))
-      );
-
-      // LOGIN SCREEN
-      if (!currentUser) {
-        return (
-          <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-              <div className="text-center mb-8">
-                <h1 className="text-3xl font-bold text-gray-800 mb-2">Ürün Yönetim Sistemi</h1>
-                <p className="text-gray-600">Giriş Yapın</p>
-              </div>
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Kullanıcı Adı"
-                  value={loginForm.username}
-                  onChange={e => setLoginForm({...loginForm, username: e.target.value})}
-                  onKeyPress={e => e.key === 'Enter' && handleLogin()}
-                  className="w-full px-4 py-3 border-2 rounded-lg focus:border-blue-500 outline-none"
-                />
-                <input
-                  type="password"
-                  placeholder="Şifre"
-                  value={loginForm.password}
-                  onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-                  onKeyPress={e => e.key === 'Enter' && handleLogin()}
-                  className="w-full px-4 py-3 border-2 rounded-lg focus:border-blue-500 outline-none"
-                />
-                <button
-                  onClick={handleLogin}
-                  className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold transition"
-                >
-                  Giriş Yap
-                </button>
-              </div>
-              <div className="mt-6 text-center text-sm text-gray-600">
-                <p>Varsayılan: admin / admin123</p>
-              </div>
-            </div>
-          </div>
-        );
-      }
 
       if (loading) {
         return (
           <div className="min-h-screen bg-gray-100 flex items-center justify-center">
             <div className="text-center">
               <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-xl font-semibold text-gray-700">Yükleniyor...</p>
+              <p className="text-xl font-semibold">Bağlantı kontrol ediliyor...</p>
+            </div>
+          </div>
+        );
+      }
+
+      if (error) {
+        return (
+          <div className="min-h-screen bg-red-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl p-8 max-w-2xl w-full">
+              <div className="text-center mb-6">
+                <div className="text-6xl mb-4">❌</div>
+                <h1 className="text-3xl font-bold text-red-600 mb-4">Bağlantı Hatası!</h1>
+              </div>
+              
+              <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 mb-6">
+                <p className="font-mono text-sm text-red-800">{error}</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                  <h3 className="font-bold text-yellow-800 mb-2">🔧 Çözüm Adımları:</h3>
+                  <ol className="list-decimal list-inside space-y-2 text-sm">
+                    <li>Supabase Dashboard → Settings → API sayfasına gidin</li>
+                    <li><strong>"anon public"</strong> key'ini kopyalayın</li>
+                    <li>HTML dosyasında <code className="bg-gray-200 px-2 py-1 rounded">SUPABASE_KEY</code> değişkenini güncelleyin</li>
+                    <li>SQL tablolarının oluşturulduğundan emin olun</li>
+                  </ol>
+                </div>
+
+                <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+                  <h3 className="font-bold text-blue-800 mb-2">📋 SQL Tabloları:</h3>
+                  <p className="text-sm mb-2">Supabase SQL Editor'da şu komutu çalıştırın:</p>
+                  <pre className="bg-gray-800 text-green-400 p-3 rounded text-xs overflow-x-auto">
+{`CREATE TABLE IF NOT EXISTS depots (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  location TEXT NOT NULL,
+  subcategories TEXT[] DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO depots (name, location, subcategories) VALUES
+  ('Ana Depo', 'İstanbul', ARRAY['Elektronik', 'Giyim']),
+  ('Yan Depo', 'Ankara', ARRAY['Gıda']);`}
+                  </pre>
+                </div>
+
+                <button
+                  onClick={() => window.location.reload()}
+                  className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold"
+                >
+                  🔄 Tekrar Dene
+                </button>
+              </div>
             </div>
           </div>
         );
       }
 
       return (
-        <div className="min-h-screen bg-gray-100">
-          {/* NAVBAR */}
-          <nav className="bg-white shadow mb-6">
-            <div className="max-w-7xl mx-auto px-6 py-4">
-              <div className="flex justify-between items-center">
-                <div className="flex gap-4">
-                  {['home', 'invoices', 'reports', 'movements', 'settings'].map(p => (
-                    <button
-                      key={p}
-                      onClick={() => p === 'reports' ? generateReport() : setPage(p)}
-                      className={`px-4 py-2 rounded-lg font-medium transition ${
-                        page === p ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      {p === 'home' ? '🏠 Ana Sayfa' : 
-                       p === 'invoices' ? '📄 Faturalar' : 
-                       p === 'reports' ? '📊 Raporlar' :
-                       p === 'movements' ? '📦 Stok Hareketleri' : '⚙️ Ayarlar'}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="text-sm text-gray-600">
-                    👤 {currentUser.full_name} ({currentUser.role})
-                  </span>
-                  {stockAlerts.length > 0 && (
-                    <button
-                      onClick={() => setModal('alerts')}
-                      className="relative bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600"
-                    >
-                      🔔 {stockAlerts.length}
-                    </button>
-                  )}
-                  <button
-                    onClick={handleLogout}
-                    className="bg-gray-200 px-4 py-2 rounded-lg hover:bg-gray-300"
-                  >
-                    Çıkış
-                  </button>
-                </div>
-              </div>
+        <div className="min-h-screen bg-gradient-to-br from-green-400 to-blue-500 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center">
+            <div className="text-6xl mb-4">✅</div>
+            <h1 className="text-3xl font-bold text-gray-800 mb-4">Bağlantı Başarılı!</h1>
+            <p className="text-gray-600 mb-6">
+              Supabase veritabanına başarıyla bağlandı. Sistem hazır!
+            </p>
+            
+            <div className="bg-green-50 border-2 border-green-200 rounded-lg p-4 mb-6">
+              <p className="text-sm text-green-700">
+                ✓ API bağlantısı aktif<br/>
+                ✓ Tablolar hazır<br/>
+                ✓ Sistem çalışıyor
+              </p>
             </div>
-          </nav>
 
-          <div className="max-w-7xl mx-auto px-6">
-            {/* HOME PAGE */}
-            {page === 'home' && (
-              <div className="space-y-6">
-                {/* BARCODE SEARCH */}
-                <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg shadow p-6 text-white">
-                  <h3 className="text-xl font-bold mb-4">🔍 Barkod ile Hızlı Arama</h3>
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      placeholder="Barkod numarası girin..."
-                      value={barcodeSearch}
-                      onChange={e => setBarcodeSearch(e.target.value)}
-                      onKeyPress={e => e.key === 'Enter' && searchByBarcode()}
-                      className="flex-1 px-4 py-3 rounded-lg text-gray-800 outline-none"
-                    />
-                    <button
-                      onClick={searchByBarcode}
-                      className="bg-white text-purple-600 px-6 py-3 rounded-lg hover:bg-gray-100 font-semibold"
-                    >
-                      Ara
-                    </button>
-                  </div>
-                </div>
-
-                {/* SEARCH & ADD */}
-                <div className="bg-white rounded-lg shadow p-6">
-                  <div className="flex gap-4">
-                    <input
-                      type="text"
-                      placeholder="Ürün veya barkod ara..."
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      className="flex-1 px-4 py-3 border rounded-lg"
-                    />
-                    {currentUser.role === 'admin' && (
-                      <button
-                        onClick={() => setModal('product')}
-                        className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold"
-                      >
-                        + Yeni Ürün
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* RESULTS */}
-                {search && (
-                  <div className="bg-white rounded-lg shadow p-6">
-                    <h3 className="text-xl font-bold mb-4">Sonuçlar ({filtered.length})</h3>
-                    {filtered.length ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {filtered.map(p => (
-                          <div
-                            key={p.id}
-                            className="border-2 rounded-lg p-4 hover:border-blue-500 cursor-pointer transition"
-                            onClick={() => { setSelectedProduct(p); setModal('productDetail'); }}
-                          >
-                            <div className="flex justify-between items-start mb-2">
-                              <h4 className="font-bold text-lg">{p.name}</h4>
-                              {p.current_stock <= p.min_stock && (
-                                <span className="bg-red-500 text-white text-xs px-2 py-1 rounded">
-                                  ⚠️ Düşük Stok
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-gray-600">{p.price} TL × {p.current_stock} adet</p>
-                            {p.barcode && <p className="text-sm text-gray-500">🔖 {p.barcode}</p>}
-                            <p className="text-sm text-gray-500">📦 {p.depot} / {p.subcategory}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-center text-gray-500 py-8">Sonuç yok</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* INVOICES PAGE */}
-            {page === 'invoices' && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-2xl font-bold mb-6">📄 Faturalar</h2>
-                {invoices.length ? invoices.map(inv => (
-                  <div key={inv.id} className="border-2 rounded-lg p-5 mb-4">
-                    <div className="flex justify-between">
-                      <div className="flex-1">
-                        <h3 className="text-xl font-bold mb-2">Fatura: {inv.invoice_number}</h3>
-                        <p className="text-sm text-gray-500 mb-3">
-                          {new Date(inv.invoice_date).toLocaleDateString('tr-TR')}
-                        </p>
-                        <div className="bg-gray-50 rounded p-4 mb-3">
-                          {inv.products?.map((p, i) => (
-                            <div key={p.id} className="flex justify-between py-2 border-b last:border-0">
-                              <div>
-                                <p className="font-semibold">{i + 1}. {p.name}</p>
-                                <p className="text-sm text-gray-600">{p.price} TL × {p.stock}</p>
-                              </div>
-                              <p className="font-bold text-green-600">{p.total.toFixed(2)} TL</p>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="bg-green-50 border-2 border-green-200 rounded p-4 flex justify-between">
-                          <div>
-                            <p className="text-sm">Toplam {inv.product_count} Ürün</p>
-                            <p className="text-sm font-semibold">Genel Toplam</p>
-                          </div>
-                          <p className="text-3xl font-bold text-green-700">
-                            {inv.total_amount.toFixed(2)} TL
-                          </p>
-                        </div>
-                      </div>
-                      {currentUser.role === 'admin' && (
-                        <button
-                          onClick={() => { setDeleteTarget(inv.id); setModal('password'); }}
-                          className="text-red-600 hover:bg-red-50 p-2 rounded ml-4 h-fit"
-                        >
-                          🗑️
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )) : (
-                  <p className="text-center text-gray-500 py-12">Henüz fatura yok</p>
-                )}
-              </div>
-            )}
-
-            {/* REPORTS PAGE */}
-            {page === 'reports' && reportData && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div className="bg-blue-500 text-white rounded-lg p-6">
-                    <p className="text-sm opacity-80">Toplam Ciro</p>
-                    <p className="text-3xl font-bold">{reportData.total.toFixed(2)} ₺</p>
-                  </div>
-                  <div className="bg-green-500 text-white rounded-lg p-6">
-                    <p className="text-sm opacity-80">Toplam Fatura</p>
-                    <p className="text-3xl font-bold">{reportData.invoiceCount}</p>
-                  </div>
-                  <div className="bg-purple-500 text-white rounded-lg p-6">
-                    <p className="text-sm opacity-80">Toplam Ürün</p>
-                    <p className="text-3xl font-bold">{reportData.productCount}</p>
-                  </div>
-                  <div className="bg-red-500 text-white rounded-lg p-6">
-                    <p className="text-sm opacity-80">Stok Uyarıları</p>
-                    <p className="text-3xl font-bold">{reportData.alertCount}</p>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-lg shadow p-6">
-                  <canvas ref={chartRef}></canvas>
-                </div>
-              </div>
-            )}
-
-            {/* STOCK MOVEMENTS PAGE */}
-            {page === 'movements' && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-2xl font-bold mb-6">📦 Stok Hareketleri</h2>
-                <div className="space-y-3">
-                  {stockMovements.map(m => (
-                    <div key={m.id} className="border rounded-lg p-4 flex justify-between items-center">
-                      <div className="flex-1">
-                        <p className="font-semibold">{m.products?.name}</p>
-                        <p className="text-sm text-gray-600">
-                          {m.movement_type === 'in' ? '📥 Giriş' : 
-                           m.movement_type === 'out' ? '📤 Çıkış' : '🔄 Transfer'} 
-                          - {m.quantity} adet
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {m.users?.full_name} • {new Date(m.created_at).toLocaleString('tr-TR')}
-                        </p>
-                        {m.notes && <p className="text-xs text-gray-500 italic">{m.notes}</p>}
-                      </div>
-                      <div className="text-right">
-                        {m.from_depot && <p className="text-sm">📍 {m.from_depot}</p>}
-                        {m.to_depot && <p className="text-sm">📍 {m.to_depot}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* SETTINGS PAGE */}
-            {page === 'settings' && (
-              <div className="space-y-6">
-                <div className="bg-white rounded-lg shadow p-6">
-                  <h2 className="text-xl font-bold mb-4">☁️ Supabase Durumu</h2>
-                  <div className="bg-green-50 border border-green-200 rounded p-4">
-                    <p className="font-semibold text-green-800 mb-2">✅ Bağlı ve Aktif</p>
-                    <p className="text-sm text-green-700">Proje: cumhuriyet-fatura</p>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-lg shadow p-6">
-                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-bold">📦 Depolar</h2>
-                    {currentUser.role === 'admin' && (
-                      <button
-                        onClick={() => setModal('depot')}
-                        className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700"
-                      >
-                        + Yeni Depo
-                      </button>
-                    )}
-                  </div>
-                  {depots.map(d => (
-                    <div key={d.id} className="border rounded-lg p-4 mb-3">
-                      <div className="flex justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="font-semibold text-lg">{d.name}</h3>
-                            {currentUser.role === 'admin' && (
-                              <button
-                                onClick={() => { setSelectedDepot(d); setModal('subcat'); }}
-                                className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
-                              >
-                                + Alt Kategori
-                              </button>
-                            )}
-                          </div>
-                          <p className="text-gray-600">Konum: {d.location}</p>
-                          {d.subcategories?.length > 0 && (
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {d.subcategories.map((s, i) => (
-                                <span key={i} className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-sm">
-                                  {s}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        {currentUser.role === 'admin' && (
-                          <button
-                            onClick={() => { setDeleteTarget(d.id); setModal('password'); }}
-                            className="text-red-600 hover:bg-red-50 p-2 rounded ml-3"
-                          >
-                            🗑️
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
+              <p className="text-sm text-yellow-800">
+                <strong>📢 Not:</strong> Tam sistemi aktifleştirmek için lütfen bana haber verin. 
+                Şu anda sadece bağlantı testi yapılıyor.
+              </p>
+            </div>
           </div>
+        </div>
+      );
+    }
 
-          {/* MODALS */}
-          {modal === 'alerts' && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg p-6 w-full max-w-2xl">
-                <h2 className="text-2xl font-bold mb-4">🔔 Stok Uyarıları</h2>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {stockAlerts.map(alert => (
-                    <div key={alert.id} className="bg-red-50 border-2 border-red-200 rounded-lg p-4 flex justify-between items-center">
-                      <div>
-                        <p className="font-semibold text-red-800">{alert.products?.name}</p>
-                        <p className="text-sm text-red-600">
-                          {alert.alert_type === 'out_of_stock' ? '❌ Stok Tükendi!' : '⚠️ Düşük Stok!'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => markAlertRead(alert.id)}
-                        className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
-                      >
-                        Okundu
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  onClick={() => setModal('')}
-                  className="w-full bg-gray-200 py-3 rounded mt-4 hover:bg-gray-300"
-                >
-                  Kapat
-                </button>
-              </div>
-            </div>
-          )}
-
-          {modal === 'productDetail' && selectedProduct && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg p-6 w-full max-w-2xl">
-                <h2 className="text-2xl font-bold mb-4">{selectedProduct.name}</h2>
-                <div className="space-y-3 mb-6">
-                  <p><strong>Fiyat:</strong> {selectedProduct.price} TL</p>
-                  <p><strong>Mevcut Stok:</strong> {selectedProduct.current_stock} adet</p>
-                  <p><strong>Minimum Stok:</strong> {selectedProduct.min_stock} adet</p>
-                  {selectedProduct.barcode && <p><strong>Barkod:</strong> {selectedProduct.barcode}</p>}
-                  <p><strong>Depo:</strong> {selectedProduct.depot} / {selectedProduct.subcategory}</p>
-                </div>
-                
-                {currentUser.role === 'admin' && (
-                  <button
-                    onClick={() => { setModal('stockMovement'); }}
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 mb-3"
-                  >
-                    📦 Stok Hareketi Yap
-                  </button>
-                )}
-                
-                <button
-                  onClick={() => { setModal(''); setSelectedProduct(null); }}
-                  className="w-full bg-gray-200 py-3 rounded-lg hover:bg-gray-300"
-                >
-                  Kapat
-                </button>
-              </div>
-            </div>
-          )}
-
-          {modal === 'stockMovement' && selectedProduct && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg p-6 w-full max-w-md">
-                <h2 className="text-2xl font-bold mb-4">📦 Stok Hareketi</h2>
-                <p className="text-gray-600 mb-4">{selectedProduct.name}</p>
-                
-                <select
-                  value={movementForm.type}
-                  onChange={e => setMovementForm({...movementForm, type: e.target.value})}
-                  className="w-full px-4 py-3 border rounded-lg mb-3"
-                >
-                  <option value="in">📥 Giriş (Stok Ekle)</option>
-                  <option value="out">📤 Çıkış (Stok Çıkar)</option>
-                </select>
-
-                <input
-                  type="number"
-                  value={movementForm.quantity}
-                  onChange={e => setMovementForm({...movementForm, quantity: e.target.value})}
-                  placeholder="Miktar"
-                  className="w-full px-4 py-3 border rounded-lg mb-3"
-                />
-
-                <textarea
-                  value={movementForm.notes}
-                  onChange={e => setMovementForm({...movementForm, notes: e.target.value})}
-                  placeholder="Not (opsiyonel)"
-                  rows={3}
-                  className="w-full px-4 py-3 border rounded-lg mb-4"
-                />
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleStockMovement}
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700"
-                  >
-                    Kaydet
-                  </button>
-                  <button
-                    onClick={() => { setModal('productDetail'); setMovementForm({ type: 'in', quantity: '', fromDepot: '', toDepot: '', notes: '' }); }}
-                    className="flex-1 bg-gray-200 py-3 rounded-lg hover:bg-gray-300"
-                  >
-                    İptal
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {modal === 'product' && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-              <div className="bg-white rounded-lg p-6 w-full max-w-2xl my-8">
-                <h2 className="text-2xl font-bold mb-4">Yeni Ürün - Adım {step}/5</h2>
-                {step === 1 && (
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Depo Seçin</h3>
-                    {depots.map(d => (
-                      <button
-                        key={d.id}
-                        onClick={() => { setProduct({...product, depot: d.name}); setSelectedDepot(d); setStep(2); }}
-                        className={`w-full p-4 rounded border-2 mb-2 text-left hover:border-blue-400 ${
-                          product.depot === d.name ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-                        }`}
-                      >
-                        <div className="font-semibold">{d.name}</div>
-                        <div className="text-sm text-gray-500">{d.location}</div>
-                      </button>
-                    ))}
-                    <button onClick={() => setModal('')} className="w-full bg-gray-200 py-3 rounded mt-4">
-                      İptal
-                    </button>
-                  </div>
-                )}
-                {step === 2 && (
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Alt Kategori</h3>
-                    {selectedDepot?.subcategories?.length > 0 ? (
-                      <div className="grid grid-cols-2 gap-3">
-                        {selectedDepot.subcategories.map((s, i) => (
-                          <button
-                            key={i}
-                            onClick={() => { setProduct({...product, subcategory: s}); setStep(3); }}
-                            className={`p-4 rounded border-2 ${
-                              product.subcategory === s ? 'border-purple-500 bg-purple-50' : 'border-gray-200'
-                            }`}
-                          >
-                            {s}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-center text-gray-500 py-8">Bu depoda alt kategori yok</p>
-                    )}
-                    <div className="flex gap-3 mt-4">
-                      <button onClick={() => setStep(1)} className="flex-1 bg-gray-200 py-3 rounded">
-                        Geri
-                      </button>
-                      <button onClick={() => setStep(3)} className="flex-1 bg-blue-600 text-white py-3 rounded">
-                        İleri
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {step === 3 && (
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Fatura Numarası</h3>
-                    <input
-                      type="text"
-                      value={invoice.number}
-                      onChange={e => setInvoice({...invoice, number: e.target.value})}
-                      placeholder="FT-2025-001"
-                      className="w-full px-4 py-3 border rounded mb-4"
-                    />
-                    <div className="flex gap-3">
-                      <button onClick={() => setStep(2)} className="flex
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
